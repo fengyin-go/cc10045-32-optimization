@@ -29,3 +29,13 @@ class EntryPayload(BaseModel):
 class ActionPayload(BaseModel):
     action: str
     remark: str | None = None
+
+
+class SnapshotComparePayload(BaseModel):
+    compare_snapshot_id: int
+    scope: str = ""
+
+
+class SignoffPayload(BaseModel):
+    request_id: str
+    signer: str = ""

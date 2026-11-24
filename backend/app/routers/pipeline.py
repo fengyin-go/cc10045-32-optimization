@@ -10,6 +10,7 @@ from app.pipeline import (
     compute_retention, compute_segment, generate_report,
     ingest_events, precompute_cube, seed_real_data,
 )
+from app.schemas import SignoffPayload, SnapshotComparePayload
 from app.services import service_for
 
 router = APIRouter(prefix="/api/pipeline", tags=["分析管线"])
@@ -113,6 +114,72 @@ def api_check_all_alerts() -> dict:
     """检查所有已生效告警规则。"""
     svc = service_for("alert_policy")
     return svc.check_all()
+
+
+# ---------------------------------------------------------------------------
+# 对账快照对比 / 差额签认 / 结论复查
+# ---------------------------------------------------------------------------
+
+@router.post("/snapshots/{snapshot_id}/compare")
+def api_compare_snapshot(snapshot_id: int, payload: SnapshotComparePayload) -> dict:
+    """试算一组快照对比，保存差异凭据（同组重算只新增版本，不动已签认差值）。"""
+    svc = service_for("report_snapshot")
+    return svc.compute_comparison(snapshot_id, payload.compare_snapshot_id, payload.scope)
+
+
+@router.post("/comparisons/{comparison_id}/signoff")
+def api_signoff_comparison(comparison_id: int, payload: SignoffPayload) -> dict:
+    """受理差额签认并出具对账结论；同一 request_id 重复送达只产生一份正式结论。"""
+    svc = service_for("report_snapshot")
+    return svc.submit_signoff(comparison_id, payload.request_id, payload.signer)
+
+
+@router.post("/comparisons/{comparison_id}/withdraw")
+def api_withdraw_comparison(comparison_id: int) -> dict:
+    """撤回尚未签认的一组对比，不影响其他组已签认的差值。"""
+    svc = service_for("report_snapshot")
+    return svc.withdraw_comparison(comparison_id)
+
+
+@router.post("/signoffs/{request_id}/resume")
+def api_resume_signoff(request_id: str) -> dict:
+    """交接班恢复：按签认请求编号补出具未生成的对账结论。"""
+    svc = service_for("report_snapshot")
+    return svc.resume_signoff(request_id)
+
+
+@router.get("/signoffs/pending")
+def api_pending_handoffs() -> dict:
+    """下一班可继续处理的凭据：已签认但结论未生成的签认记录。"""
+    svc = service_for("report_snapshot")
+    return {"ok": True, "items": svc.pending_handoffs()}
+
+
+@router.get("/signoffs/{signoff_id}")
+def api_get_signoff(signoff_id: int) -> dict:
+    """按编号复核签认记录及其冻结的差异凭据。"""
+    svc = service_for("report_snapshot")
+    signoff = svc.get_signoff(signoff_id)
+    if signoff is None:
+        return {"ok": False, "message": f"签认记录 {signoff_id} 不存在"}
+    return {"ok": True, "signoff": signoff}
+
+
+@router.get("/snapshots/{snapshot_id}/review")
+def api_snapshot_review(snapshot_id: int) -> dict:
+    """重新打开原快照的复查视图：逐组对比凭据 + 签认交接状态（老快照回退原摘要）。"""
+    svc = service_for("report_snapshot")
+    return svc.snapshot_review(snapshot_id)
+
+
+@router.get("/reconciliation-reports/{request_id}")
+def api_reconciliation_report(request_id: str) -> dict:
+    """按签认请求编号查已出具的正式对账结论。"""
+    svc = service_for("report_snapshot")
+    report = svc.reconciliation_report(request_id)
+    if report is None:
+        return {"ok": False, "message": f"签认请求 {request_id} 尚未出具结论"}
+    return {"ok": True, "report": report}
 
 
 @router.get("/analytics/full-pipeline")

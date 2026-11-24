@@ -321,6 +321,55 @@ DDL_STATEMENTS = [
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
 
+    # ==================== 对账差异凭据 / 签认 / 结论（独立持久层） ====================
+    # 差异凭据：同一份原快照可同时与多个经办版本对比，每组（原快照, 对比版本, 对比范围）
+    # 独立成行、按 comparison_version 递增；已签认的行不再被试算或撤回更新。
+    """CREATE TABLE IF NOT EXISTS snapshot_comparisons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        base_snapshot_id INTEGER NOT NULL,
+        compare_snapshot_id INTEGER NOT NULL,
+        compare_scope TEXT NOT NULL DEFAULT '',
+        comparison_version INTEGER NOT NULL DEFAULT 1,
+        diff_data TEXT NOT NULL DEFAULT '{}',
+        total_diff REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT '待签认',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        signed_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sc_pair ON snapshot_comparisons(base_snapshot_id, compare_snapshot_id)",
+
+    # 签认记录：request_id 为幂等键，同一笔签认请求重复送达只落一份；
+    # report_status 标记结论是否已生成，支撑交接班恢复"已签认待生成"的凭据。
+    """CREATE TABLE IF NOT EXISTS signoff_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL UNIQUE,
+        comparison_id INTEGER NOT NULL,
+        signer TEXT NOT NULL DEFAULT '',
+        signed_diff REAL NOT NULL DEFAULT 0,
+        diff_snapshot TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT '已签认',
+        report_status TEXT NOT NULL DEFAULT '待生成',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (comparison_id) REFERENCES snapshot_comparisons(id)
+    )""",
+
+    # 对账结论报告：request_id 唯一保证同一签认请求只出具一份正式结论；
+    # snapshot_evidence 冻结本次采用的两份快照内容与签认记录，随报告一起保存。
+    """CREATE TABLE IF NOT EXISTS reconciliation_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id TEXT NOT NULL UNIQUE,
+        signoff_id INTEGER NOT NULL,
+        comparison_id INTEGER NOT NULL,
+        base_snapshot_id INTEGER NOT NULL,
+        compare_snapshot_id INTEGER NOT NULL,
+        conclusion TEXT NOT NULL DEFAULT '{}',
+        snapshot_evidence TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT '已出具',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (signoff_id) REFERENCES signoff_records(id),
+        FOREIGN KEY (comparison_id) REFERENCES snapshot_comparisons(id)
+    )""",
+
     """CREATE TABLE IF NOT EXISTS dashboards (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         dashboard_name TEXT NOT NULL,
